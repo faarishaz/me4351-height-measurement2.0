@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ME 4351 Height Measurement</title>
+<style>
+body { font-family: Arial, sans-serif; max-width: 720px; margin: auto; padding: 16px; background: #f5f5f5; color: #222; }
+section { background: white; border: 1px solid #ccc; padding: 14px; margin: 14px 0; }
+input, button, select { font-size: 16px; padding: 8px; margin: 5px 0; max-width: 100%; }
+input[type=number] { width: 100px; } button { cursor: pointer; }
+.photo { border-top: 1px solid #ccc; padding: 12px 0; }
+.viewer { overflow: auto; max-height: 65vh; }
+canvas { display: block; } table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { border: 1px solid #ccc; padding: 5px; text-align: right; }
+#height { font-size: 28px; font-weight: bold; } #message { color: #a22; }
+</style>
+</head>
+<body>
+<h1>Remote Height Measurement</h1>
+<p>ME 4351 — Project 1</p>
+<section>
+<h2>1. Setup</h2>
+<label>Slider travel (mm): <input id="travel" type="number" min="1" value="300"></label>
+<label>Photos: <select id="count"><option>3</option><option selected>5</option><option>7</option><option>11</option></select></label>
+<button onclick="setup()">Start / reset</button>
+<button onclick="example()">Load simulated data</button>
+<p>Keep the camera level, fixed at 1×, and square to the rail. Use the same image dimensions and orientation. Tap the top and bottom of the same vertical edge in each photo.</p>
+<div id="photos"></div>
+</section>
+<section>
+<h2>2. Calculate height</h2>
+<button onclick="calculate()">Calculate</button>
+<p id="message" role="alert"></p>
+<p id="height">—</p>
+<div id="details"></div>
+<canvas id="plot" width="620" height="300" style="width:100%;max-width:620px"></canvas>
+<div style="overflow:auto"><table id="data"></table></div>
+</section>
+<section>
+<h2>3. Reference and error</h2>
+<label>Independent reference height (mm): <input id="reference" type="number" min="0" step="any" oninput="referenceError()"></label>
+<p id="error">—</p>
+<button onclick="exportCSV()">Export CSV</button>
+</section>
+<script>
+// Each entry stores a slider position, a photo, and two selected pixel points.
+let photos = [], result = null, simulated = false;
+const get = id => document.getElementById(id);
+const mean = a => a.reduce((sum, v) => sum + v, 0) / a.length;
+function clearResult() {
+  result = null; get('height').textContent = '—'; get('details').textContent = '';
+  get('data').innerHTML = ''; get('error').textContent = '—'; get('message').textContent = '';
+  get('plot').getContext('2d').clearRect(0,0,620,300);
+}
+function setup() {
+  const travel = Number(get('travel').value), n = Number(get('count').value);
+  if (!(travel > 0)) { get('message').textContent = 'Enter a positive travel.'; return false; }
+  photos = []; simulated = false; clearResult(); get('reference').value = ''; get('photos').innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const p = { points: [], image: null, zoom: 1 };
+    photos.push(p);
+    const div = document.createElement('div'); div.className = 'photo';
+    div.innerHTML = `<b>Photo ${i+1}</b><br>Position (mm): <input type="number" step="any" value="${Number((travel*i/(n-1)).toFixed(3))}"><br>
+    <input type="file" accept="image/*"><br><button>Clear points</button> <button>Zoom +</button> <button>Zoom −</button>
+    <p class="status">Choose a photograph.</p><div class="viewer"><canvas hidden></canvas></div>`;
+    get('photos').appendChild(div);
+    p.position = div.querySelector('input'); p.canvas = div.querySelector('canvas'); p.status = div.querySelector('.status');
+    p.position.oninput = clearResult;
+    div.querySelector('input[type=file]').onchange = e => loadPhoto(p,e.target.files[0]);
+    const buttons = div.querySelectorAll('button');
+    buttons[0].onclick = () => { p.points = []; clearResult(); drawPhoto(p); };
+    buttons[1].onclick = () => { p.zoom = Math.min(8,p.zoom*1.5); drawPhoto(p); };
+    buttons[2].onclick = () => { p.zoom = Math.max(1,p.zoom/1.5); drawPhoto(p); };
+    p.canvas.onclick = e => {
+      if (!p.image || p.points.length === 2) return;
+      const r = p.canvas.getBoundingClientRect();
+      p.points.push({x:(e.clientX-r.left)*p.canvas.width/r.width, y:(e.clientY-r.top)*p.canvas.height/r.height});
+      clearResult(); drawPhoto(p);
+    };
+  }
+  return true;
+}
+function loadPhoto(p,file) {
+  if (!file) return;
+  if (simulated) { get('message').textContent = 'Click Start / reset before using real photos.'; return; }
+  const url = URL.createObjectURL(file), image = new Image();
+  image.onload = () => { URL.revokeObjectURL(url); p.image = image; p.points = []; p.zoom = 1; clearResult(); drawPhoto(p); };
+  image.onerror = () => { URL.revokeObjectURL(url); p.image = null; p.points = []; p.canvas.hidden = true; clearResult(); p.status.textContent = 'Cannot open image. Try JPEG or PNG.'; };
+  image.src = url;
+}
+function drawPhoto(p) {
+  if (p.image) {
+    const c = p.canvas; c.hidden = false; c.width = p.image.naturalWidth; c.height = p.image.naturalHeight;
+    c.style.width = Math.min(c.width, c.parentElement.clientWidth)*p.zoom+'px';
+    const ctx = c.getContext('2d'); ctx.drawImage(p.image,0,0);
+    ctx.strokeStyle = '#00ff44'; ctx.lineWidth = Math.max(2,c.width/500);
+    for (const q of p.points) { ctx.beginPath(); ctx.arc(q.x,q.y,c.width/150,0,2*Math.PI); ctx.stroke(); }
+    if (p.points.length === 2) { ctx.beginPath(); ctx.moveTo(p.points[0].x,p.points[0].y); ctx.lineTo(p.points[1].x,p.points[1].y); ctx.stroke(); }
+  }
+  p.status.textContent = p.points.length === 2 ? p.points.map(q=>`(${q.x.toFixed(1)}, ${q.y.toFixed(1)})`).join(' to ') : p.points.length === 1 ? 'Tap bottom point.' : p.image ? 'Tap top point.' : 'Choose a photograph.';
+}
+// Least squares: x = mX + b. X is in mm and x is in pixels.
+function solve(X,x,h) {
+  const n = X.length, Xavg = mean(X), xavg = mean(x), havg = mean(h);
+  let Sxx = 0, Sxy = 0;
+  for (let i=0;i<n;i++) { Sxx += (X[i]-Xavg)**2; Sxy += (X[i]-Xavg)*(x[i]-xavg); }
+  if (Sxx === 0) throw Error('Positions must be different.');
+  const m = Sxy/Sxx, b = xavg-m*Xavg;
+  if (Math.abs(m) < 1e-9) throw Error('No measurable horizontal image shift.');
+  const H = havg/Math.abs(m);
+  const residual = X.map((v,i)=>x[i]-(m*v+b));
+  const SSE = residual.reduce((s,v)=>s+v*v,0), SST = x.reduce((s,v)=>s+(v-xavg)**2,0);
+  const R2 = 1-SSE/SST;
+  // Random uncertainty from regression slope and mean pixel height.
+  const um = Math.sqrt(SSE/(n-2)/Sxx);
+  const uh = Math.sqrt(h.reduce((s,v)=>s+(v-havg)**2,0)/(n-1)/n);
+  const uH = H*Math.sqrt((uh/havg)**2+(um/m)**2);
+  const t = {3:12.706,5:3.182,7:2.571,11:2.262}[n];
+  return {X,x,h,m,b,H,R2,um,uh,uH,interval:t*uH,residual,havg};
+}
+function calculate() {
+  clearResult();
+  try {
+    if (photos.some(p=>p.points.length!==2 || p.position.value.trim()==='')) throw Error('Complete all photo points and positions first.');
+    if (!simulated && photos.some(p=>!p.image || p.image.naturalWidth!==photos[0].image.naturalWidth || p.image.naturalHeight!==photos[0].image.naturalHeight)) throw Error('All photos must have matching image dimensions.');
+    const X = photos.map(p=>Number(p.position.value));
+    if (X.some(v=>!Number.isFinite(v)) || new Set(X).size!==X.length) throw Error('Enter distinct valid slider positions.');
+    const x = photos.map(p=>(p.points[0].x+p.points[1].x)/2);
+    const h = photos.map(p=>p.points[1].y-p.points[0].y);
+    if (h.some(v=>v<=0)) throw Error('Select top first, then bottom.');
+    result = solve(X,x,h); const r = result;
+    get('height').textContent = `Measured height: ${r.H.toFixed(2)} mm`;
+    get('details').innerHTML = `${simulated?' <b>SIMULATED DATA — not experimental.</b><br>':''}Average pixel height: ${r.havg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Estimated random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
+    get('data').innerHTML = '<tr><th>X (mm)</th><th>x (px)</th><th>h (px)</th><th>Residual (px)</th></tr>'+X.map((v,i)=>`<tr><td>${v}</td><td>${x[i].toFixed(2)}</td><td>${h[i].toFixed(2)}</td><td>${r.residual[i].toFixed(2)}</td></tr>`).join('');
+    if (r.R2<0.99) get('message').textContent = 'Check alignment and point selection: regression fit is weak.';
+    plot(r); referenceError();
+  } catch(e) { get('message').textContent = e.message; }
+}
+function plot(r) {
+  const c=get('plot'), ctx=c.getContext('2d');
+  const xmin=Math.min(...r.X), xmax=Math.max(...r.X), ymin=Math.min(...r.x,r.m*xmin+r.b,r.m*xmax+r.b), ymax=Math.max(...r.x,r.m*xmin+r.b,r.m*xmax+r.b);
+  const px=v=>65+530*(v-xmin)/(xmax-xmin), py=v=>245-210*(v-ymin)/(ymax-ymin||1);
+  ctx.clearRect(0,0,c.width,c.height); ctx.font='14px Arial'; ctx.fillStyle='#222'; ctx.strokeStyle='#222';
+  ctx.beginPath();ctx.moveTo(65,25);ctx.lineTo(65,250);ctx.lineTo(600,250);ctx.stroke();
+  ctx.fillText('Horizontal pixel position (px)',65,18);ctx.fillText('Slider position (mm)',240,290);
+  for(let i=0;i<=4;i++){const X=xmin+(xmax-xmin)*i/4,y=ymin+(ymax-ymin)*i/4;ctx.fillText(X.toFixed(1),px(X)-12,268);ctx.fillText(y.toFixed(0),5,py(y)+4);}
+  ctx.strokeStyle='#1766a3';ctx.beginPath();ctx.moveTo(px(xmin),py(r.m*xmin+r.b));ctx.lineTo(px(xmax),py(r.m*xmax+r.b));ctx.stroke();
+  ctx.fillStyle='#b33';r.X.forEach((v,i)=>{ctx.beginPath();ctx.arc(px(v),py(r.x[i]),4,0,2*Math.PI);ctx.fill();});
+}
+function referenceError() {
+  const ref=Number(get('reference').value);
+  get('error').textContent=result && ref>0 ? `Absolute error: ${Math.abs(result.H-ref).toFixed(2)} mm; percent error: ${(100*Math.abs(result.H-ref)/ref).toFixed(2)}%`:'—';
+}
+function example() {
+  get('travel').value=300;get('count').value=5;setup();simulated=true;
+  photos.forEach((p,i)=>{const x=2400-150*i,h=[600,601,599,600,600][i];p.points=[{x,y:900},{x,y:900+h}];drawPhoto(p);});
+  get('reference').value=302;calculate();
+}
+function exportCSV() {
+  if(!result){get('message').textContent='Calculate first.';return;}
+  const r=result,ref=Number(get('reference').value),rows=[['Mode',simulated?'SIMULATED':'Experimental'],['Height_mm',r.H],['Slope_px_per_mm',r.m],['R_squared',r.R2],['Random_95_halfwidth_mm',r.interval],['Reference_mm',ref>0?ref:''],['Absolute_percent_error',ref>0?100*Math.abs(r.H-ref)/ref:''],['Position_mm','Top_x','Top_y','Bottom_x','Bottom_y','Mean_x_px','Height_px','Residual_px']];
+  photos.forEach((p,i)=>rows.push([r.X[i],p.points[0].x,p.points[0].y,p.points[1].x,p.points[1].y,r.x[i],r.h[i],r.residual[i]]));
+  const url=URL.createObjectURL(new Blob([rows.map(a=>a.join(',')).join('\n')],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download='height_measurement.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+setup();
+</script>
+</body>
+</html>

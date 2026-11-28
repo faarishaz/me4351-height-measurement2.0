@@ -43,10 +43,16 @@ th, td { border: 1px solid #ccc; padding: 5px; text-align: right; }
 <button onclick="exportCSV()">Export CSV</button>
 </section>
 <script>
-// Each entry stores a slider position, a photo, and two selected pixel points.
+// Photo data
 let photos = [], result = null;
 const get = id => document.getElementById(id);
-const mean = a => a.reduce((sum, v) => sum + v, 0) / a.length;
+function mean(data) {
+  let sum = 0;
+  for (let i = 0; i < data.length; i++) {
+    sum += data[i];
+  }
+  return sum / data.length;
+}
 function clearResult() {
   result = null; get('height').textContent = '—'; get('details').textContent = '';
   get('data').innerHTML = ''; get('error').textContent = '—'; get('message').textContent = '';
@@ -99,38 +105,69 @@ function drawPhoto(p) {
   }
   p.status.textContent = p.points.length === 2 ? p.points.map(q=>`(${q.x.toFixed(1)}, ${q.y.toFixed(1)})`).join(' to ') : p.points.length === 1 ? 'Tap bottom point.' : p.image ? 'Tap top point.' : 'Choose a photograph.';
 }
-// Least squares: x = mX + b. X is in mm and x is in pixels.
-function solve(X,x,h) {
-  const n = X.length, Xavg = mean(X), xavg = mean(x), havg = mean(h);
-  let Sxx = 0, Sxy = 0;
-  for (let i=0;i<n;i++) { Sxx += (X[i]-Xavg)**2; Sxy += (X[i]-Xavg)*(x[i]-xavg); }
-  if (Sxx === 0) throw Error('Positions must be different.');
-  const m = Sxy/Sxx, b = xavg-m*Xavg;
+// Linear regression: x = mX + b
+function solve(X, x, h) {
+  const n = X.length;
+  const X_avg = mean(X);
+  const x_avg = mean(x);
+  const h_avg = mean(h);
+
+  let sum_xx = 0;
+  let sum_xy = 0;
+  for (let i = 0; i < n; i++) {
+    sum_xx += (X[i] - X_avg)**2;
+    sum_xy += (X[i] - X_avg) * (x[i] - x_avg);
+  }
+
+  if (sum_xx === 0) throw Error('Positions must be different.');
+  const m = sum_xy / sum_xx;
+  const b = x_avg - m * X_avg;
   if (Math.abs(m) < 1e-9) throw Error('No measurable horizontal image shift.');
-  const H = havg/Math.abs(m);
-  const residual = X.map((v,i)=>x[i]-(m*v+b));
-  const SSE = residual.reduce((s,v)=>s+v*v,0), SST = x.reduce((s,v)=>s+(v-xavg)**2,0);
-  const R2 = 1-SSE/SST;
-  // Random uncertainty from regression slope and mean pixel height.
-  const um = Math.sqrt(SSE/(n-2)/Sxx);
-  const uh = Math.sqrt(h.reduce((s,v)=>s+(v-havg)**2,0)/(n-1)/n);
-  const uH = H*Math.sqrt((uh/havg)**2+(um/m)**2);
-  const t = 3.182; // 95% Student t factor for 5 photos and 3 regression degrees of freedom
-  return {X,x,h,m,b,H,R2,um,uh,uH,interval:t*uH,residual,havg};
+
+  // Object height in mm
+  const H = h_avg / Math.abs(m);
+
+  // Residuals and R squared
+  const residual = [];
+  let SSE = 0;
+  let SST = 0;
+  let sum_h = 0;
+  for (let i = 0; i < n; i++) {
+    residual[i] = x[i] - (m * X[i] + b);
+    SSE += residual[i]**2;
+    SST += (x[i] - x_avg)**2;
+    sum_h += (h[i] - h_avg)**2;
+  }
+  const R2 = 1 - SSE / SST;
+
+  // Random uncertainty
+  const u_m = Math.sqrt(SSE / (n - 2) / sum_xx);
+  const u_h = Math.sqrt(sum_h / (n - 1) / n);
+  const u_H = H * Math.sqrt((u_h / h_avg)**2 + (u_m / m)**2);
+  const t = 3.182; // 95%, 3 degrees of freedom
+  const interval = t * u_H;
+
+  return {X, x, h, m, b, H, R2, u_m, u_h, u_H, interval, residual, h_avg};
 }
 function calculate() {
   clearResult();
   try {
     if (photos.some(p=>p.points.length!==2 || p.position.value.trim()==='')) throw Error('Complete all photo points and positions first.');
     if (photos.some(p=>!p.image || p.image.naturalWidth!==photos[0].image.naturalWidth || p.image.naturalHeight!==photos[0].image.naturalHeight)) throw Error('All photos must have matching image dimensions.');
-    const X = photos.map(p=>Number(p.position.value));
+    const X = [];
+    const x = [];
+    const h = [];
+    for (let i = 0; i < photos.length; i++) {
+      const p = photos[i];
+      X.push(Number(p.position.value));
+      x.push((p.points[0].x + p.points[1].x) / 2);
+      h.push(p.points[1].y - p.points[0].y);
+    }
     if (X.some(v=>!Number.isFinite(v)) || new Set(X).size!==X.length) throw Error('Enter distinct valid slider positions.');
-    const x = photos.map(p=>(p.points[0].x+p.points[1].x)/2);
-    const h = photos.map(p=>p.points[1].y-p.points[0].y);
     if (h.some(v=>v<=0)) throw Error('Select top first, then bottom.');
     result = solve(X,x,h); const r = result;
     get('height').textContent = `Measured height: ${r.H.toFixed(2)} mm`;
-    get('details').innerHTML = `Average pixel height: ${r.havg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Approximate random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
+    get('details').innerHTML = `Average pixel height: ${r.h_avg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Approximate random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
     get('data').innerHTML = '<tr><th>X (mm)</th><th>x (px)</th><th>h (px)</th><th>Residual (px)</th></tr>'+X.map((v,i)=>`<tr><td>${v}</td><td>${x[i].toFixed(2)}</td><td>${h[i].toFixed(2)}</td><td>${r.residual[i].toFixed(2)}</td></tr>`).join('');
     if (r.R2<0.99) get('message').textContent = 'Check alignment and point selection: regression fit is weak.';
     plot(r); referenceError();

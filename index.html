@@ -22,7 +22,7 @@ th, td { border: 1px solid #ccc; padding: 5px; text-align: right; }
 <section>
 <h2>1. Setup</h2>
 <label>Slider travel (mm): <input id="travel" type="number" min="1" value="300"></label>
-<label>Photos: <select id="count"><option>3</option><option selected>5</option><option>7</option><option>11</option></select></label>
+<p>Number of photographs: 5</p>
 <button onclick="setup()">Start / reset</button>
 <button onclick="example()">Load simulated data</button>
 <p>Keep the camera level, fixed at 1×, and square to the rail. Use the same image dimensions and orientation. Tap the top and bottom of the same vertical edge in each photo.</p>
@@ -54,7 +54,8 @@ function clearResult() {
   get('plot').getContext('2d').clearRect(0,0,620,300);
 }
 function setup() {
-  const travel = Number(get('travel').value), n = Number(get('count').value);
+  const travel = Number(get('travel').value);
+  const n = 5;
   if (!(travel > 0)) { get('message').textContent = 'Enter a positive travel.'; return false; }
   photos = []; simulated = false; clearResult(); get('reference').value = ''; get('photos').innerHTML = '';
   for (let i = 0; i < n; i++) {
@@ -116,7 +117,7 @@ function solve(X,x,h) {
   const um = Math.sqrt(SSE/(n-2)/Sxx);
   const uh = Math.sqrt(h.reduce((s,v)=>s+(v-havg)**2,0)/(n-1)/n);
   const uH = H*Math.sqrt((uh/havg)**2+(um/m)**2);
-  const t = {3:12.706,5:3.182,7:2.571,11:2.262}[n];
+  const t = 3.182; // 95% Student t factor for 5 photos and 3 regression degrees of freedom
   return {X,x,h,m,b,H,R2,um,uh,uH,interval:t*uH,residual,havg};
 }
 function calculate() {
@@ -131,7 +132,7 @@ function calculate() {
     if (h.some(v=>v<=0)) throw Error('Select top first, then bottom.');
     result = solve(X,x,h); const r = result;
     get('height').textContent = `Measured height: ${r.H.toFixed(2)} mm`;
-    get('details').innerHTML = `${simulated?' <b>SIMULATED DATA — not experimental.</b><br>':''}Average pixel height: ${r.havg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Estimated random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
+    get('details').innerHTML = `${simulated?' <b>SIMULATED DATA — not experimental.</b><br>':''}Average pixel height: ${r.havg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Approximate random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
     get('data').innerHTML = '<tr><th>X (mm)</th><th>x (px)</th><th>h (px)</th><th>Residual (px)</th></tr>'+X.map((v,i)=>`<tr><td>${v}</td><td>${x[i].toFixed(2)}</td><td>${h[i].toFixed(2)}</td><td>${r.residual[i].toFixed(2)}</td></tr>`).join('');
     if (r.R2<0.99) get('message').textContent = 'Check alignment and point selection: regression fit is weak.';
     plot(r); referenceError();
@@ -153,7 +154,7 @@ function referenceError() {
   get('error').textContent=result && ref>0 ? `Absolute error: ${Math.abs(result.H-ref).toFixed(2)} mm; percent error: ${(100*Math.abs(result.H-ref)/ref).toFixed(2)}%`:'—';
 }
 function example() {
-  get('travel').value=300;get('count').value=5;setup();simulated=true;
+  get('travel').value=300;setup();simulated=true;
   photos.forEach((p,i)=>{const x=2400-150*i,h=[600,601,599,600,600][i];p.points=[{x,y:900},{x,y:900+h}];drawPhoto(p);});
   get('reference').value=302;calculate();
 }

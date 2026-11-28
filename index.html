@@ -24,7 +24,6 @@ th, td { border: 1px solid #ccc; padding: 5px; text-align: right; }
 <label>Slider travel (mm): <input id="travel" type="number" min="1" value="300"></label>
 <p>Number of photographs: 5</p>
 <button onclick="setup()">Start / reset</button>
-<button onclick="example()">Load simulated data</button>
 <p>Keep the camera level, fixed at 1×, and square to the rail. Use the same image dimensions and orientation. Tap the top and bottom of the same vertical edge in each photo.</p>
 <div id="photos"></div>
 </section>
@@ -45,7 +44,7 @@ th, td { border: 1px solid #ccc; padding: 5px; text-align: right; }
 </section>
 <script>
 // Each entry stores a slider position, a photo, and two selected pixel points.
-let photos = [], result = null, simulated = false;
+let photos = [], result = null;
 const get = id => document.getElementById(id);
 const mean = a => a.reduce((sum, v) => sum + v, 0) / a.length;
 function clearResult() {
@@ -57,7 +56,7 @@ function setup() {
   const travel = Number(get('travel').value);
   const n = 5;
   if (!(travel > 0)) { get('message').textContent = 'Enter a positive travel.'; return false; }
-  photos = []; simulated = false; clearResult(); get('reference').value = ''; get('photos').innerHTML = '';
+  photos = []; clearResult(); get('reference').value = ''; get('photos').innerHTML = '';
   for (let i = 0; i < n; i++) {
     const p = { points: [], image: null, zoom: 1 };
     photos.push(p);
@@ -84,7 +83,6 @@ function setup() {
 }
 function loadPhoto(p,file) {
   if (!file) return;
-  if (simulated) { get('message').textContent = 'Click Start / reset before using real photos.'; return; }
   const url = URL.createObjectURL(file), image = new Image();
   image.onload = () => { URL.revokeObjectURL(url); p.image = image; p.points = []; p.zoom = 1; clearResult(); drawPhoto(p); };
   image.onerror = () => { URL.revokeObjectURL(url); p.image = null; p.points = []; p.canvas.hidden = true; clearResult(); p.status.textContent = 'Cannot open image. Try JPEG or PNG.'; };
@@ -124,7 +122,7 @@ function calculate() {
   clearResult();
   try {
     if (photos.some(p=>p.points.length!==2 || p.position.value.trim()==='')) throw Error('Complete all photo points and positions first.');
-    if (!simulated && photos.some(p=>!p.image || p.image.naturalWidth!==photos[0].image.naturalWidth || p.image.naturalHeight!==photos[0].image.naturalHeight)) throw Error('All photos must have matching image dimensions.');
+    if (photos.some(p=>!p.image || p.image.naturalWidth!==photos[0].image.naturalWidth || p.image.naturalHeight!==photos[0].image.naturalHeight)) throw Error('All photos must have matching image dimensions.');
     const X = photos.map(p=>Number(p.position.value));
     if (X.some(v=>!Number.isFinite(v)) || new Set(X).size!==X.length) throw Error('Enter distinct valid slider positions.');
     const x = photos.map(p=>(p.points[0].x+p.points[1].x)/2);
@@ -132,7 +130,7 @@ function calculate() {
     if (h.some(v=>v<=0)) throw Error('Select top first, then bottom.');
     result = solve(X,x,h); const r = result;
     get('height').textContent = `Measured height: ${r.H.toFixed(2)} mm`;
-    get('details').innerHTML = `${simulated?' <b>SIMULATED DATA — not experimental.</b><br>':''}Average pixel height: ${r.havg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Approximate random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
+    get('details').innerHTML = `Average pixel height: ${r.havg.toFixed(2)} px<br>Slope: ${r.m.toFixed(5)} px/mm<br>R²: ${r.R2.toFixed(6)}<br>Approximate random 95% interval: ±${r.interval.toFixed(2)} mm<br><small>Excludes systematic errors and slider calibration. High R² alone does not prove accuracy.</small>`;
     get('data').innerHTML = '<tr><th>X (mm)</th><th>x (px)</th><th>h (px)</th><th>Residual (px)</th></tr>'+X.map((v,i)=>`<tr><td>${v}</td><td>${x[i].toFixed(2)}</td><td>${h[i].toFixed(2)}</td><td>${r.residual[i].toFixed(2)}</td></tr>`).join('');
     if (r.R2<0.99) get('message').textContent = 'Check alignment and point selection: regression fit is weak.';
     plot(r); referenceError();
@@ -153,14 +151,9 @@ function referenceError() {
   const ref=Number(get('reference').value);
   get('error').textContent=result && ref>0 ? `Absolute error: ${Math.abs(result.H-ref).toFixed(2)} mm; percent error: ${(100*Math.abs(result.H-ref)/ref).toFixed(2)}%`:'—';
 }
-function example() {
-  get('travel').value=300;setup();simulated=true;
-  photos.forEach((p,i)=>{const x=2400-150*i,h=[600,601,599,600,600][i];p.points=[{x,y:900},{x,y:900+h}];drawPhoto(p);});
-  get('reference').value=302;calculate();
-}
 function exportCSV() {
   if(!result){get('message').textContent='Calculate first.';return;}
-  const r=result,ref=Number(get('reference').value),rows=[['Mode',simulated?'SIMULATED':'Experimental'],['Height_mm',r.H],['Slope_px_per_mm',r.m],['R_squared',r.R2],['Random_95_halfwidth_mm',r.interval],['Reference_mm',ref>0?ref:''],['Absolute_percent_error',ref>0?100*Math.abs(r.H-ref)/ref:''],['Position_mm','Top_x','Top_y','Bottom_x','Bottom_y','Mean_x_px','Height_px','Residual_px']];
+  const r=result,ref=Number(get('reference').value),rows=[['Height_mm',r.H],['Slope_px_per_mm',r.m],['R_squared',r.R2],['Random_95_halfwidth_mm',r.interval],['Reference_mm',ref>0?ref:''],['Absolute_percent_error',ref>0?100*Math.abs(r.H-ref)/ref:''],['Position_mm','Top_x','Top_y','Bottom_x','Bottom_y','Mean_x_px','Height_px','Residual_px']];
   photos.forEach((p,i)=>rows.push([r.X[i],p.points[0].x,p.points[0].y,p.points[1].x,p.points[1].y,r.x[i],r.h[i],r.residual[i]]));
   const url=URL.createObjectURL(new Blob([rows.map(a=>a.join(',')).join('\n')],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download='height_measurement.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
